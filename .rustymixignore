@@ -1,0 +1,5 @@
+# .rustymixignore – custom ignore patterns for the codebase dumper
+# This file is combined with .gitignore when scanning.
+# Patterns are relative to the directory containing this file.
+
+Cargo.lock
