@@ -30,9 +30,9 @@ struct RunArgs {
     #[arg(long)]
     include_hidden: bool,
 
-    /// Print progress information to stderr
+    /// Suppress progress information (quiet mode)
     #[arg(short, long)]
-    verbose: bool,
+    silent: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -91,6 +91,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run_dump(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let verbose = !args.silent;
+    
     let mut walk_builder = WalkBuilder::new(&args.input_dir);
     walk_builder
         .git_ignore(true)
@@ -115,14 +117,14 @@ async fn run_dump(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             Err(err) => {
-                if args.verbose {
+                if verbose {
                     eprintln!("Warning: skipping entry due to error: {}", err);
                 }
             }
         }
     }
 
-    if args.verbose {
+    if verbose {
         eprintln!("Found {} files to process.", file_paths.len());
     }
 
@@ -136,7 +138,7 @@ async fn run_dump(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     for rel_path in &file_paths {
         let absolute_path = args.input_dir.join(rel_path);
-        if args.verbose {
+        if verbose {
             eprintln!("Reading: {}", rel_path.display());
         }
 
@@ -151,7 +153,7 @@ async fn run_dump(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     writer.flush().await?;
 
-    if args.verbose {
+    if verbose {
         eprintln!("Done. Output written to {}", args.output.display());
     }
 

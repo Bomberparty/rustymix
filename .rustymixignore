@@ -3,3 +3,5 @@
 # Patterns are relative to the directory containing this file.
 
 Cargo.lock
+target/
+vendor/
