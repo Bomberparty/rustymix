@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 use ignore::WalkBuilder;
@@ -8,8 +9,7 @@ use tokio::task;
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    /// Arguments for the default "run" command
-    #[command(flatten)]    
+    #[command(flatten)]
     run_args: RunArgs,
 
     #[command(subcommand)]
@@ -75,6 +75,95 @@ Thumbs.db
     Ok(())
 }
 
+// ──────────────────────────────────────────────────────────────
+// Language configuration & line-counting logic (adapted from cloc-rs)
+// ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+struct LangConfig {
+    name: &'static str,
+    single: &'static [&'static str],
+    multi: &'static [(&'static str, &'static str)],
+}
+
+fn get_lang_config(ext: &str) -> Option<LangConfig> {
+    match ext {
+        "rs" => Some(LangConfig { name: "Rust", single: &["//", "///", "//!"], multi: &[("/*", "*/")] }),
+        "c" | "cpp" | "cxx" | "cc" | "h" | "hpp" => Some(LangConfig { name: "C/C++", single: &["//"], multi: &[("/*", "*/")] }),
+        "py" => Some(LangConfig { name: "Python", single: &["#"], multi: &[("'''", "'''"), ("\"\"\"", "\"\"\"")] }),
+        "js" | "mjs" | "jsx" => Some(LangConfig { name: "JavaScript", single: &["//"], multi: &[("/*", "*/")] }),
+        "ts" | "tsx" => Some(LangConfig { name: "TypeScript", single: &["//"], multi: &[("/*", "*/")] }),
+        "go" => Some(LangConfig { name: "Go", single: &["//"], multi: &[("/*", "*/")] }),
+        "java" => Some(LangConfig { name: "Java", single: &["//"], multi: &[("/*", "*/")] }),
+        "sh" | "bash" | "zsh" | "fish" => Some(LangConfig { name: "Shell", single: &["#"], multi: &[] }),
+        "md" | "markdown" => Some(LangConfig { name: "Markdown", single: &[], multi: &[] }),
+        "json" => Some(LangConfig { name: "JSON", single: &[], multi: &[] }),
+        "yaml" | "yml" | "toml" | "ini" | "cfg" => Some(LangConfig { name: "Config", single: &["#"], multi: &[] }),
+        "html" | "xml" | "svg" => Some(LangConfig { name: "Markup", single: &[], multi: &[("<!--", "-->")] }),
+        "css" | "less" | "scss" | "sass" => Some(LangConfig { name: "CSS", single: &["//"], multi: &[("/*", "*/")] }),
+        "lua" => Some(LangConfig { name: "Lua", single: &["--"], multi: &[("--[[", "]]")] }),
+        "rb" | "ruby" => Some(LangConfig { name: "Ruby", single: &["#"], multi: &[("=begin", "=end")] }),
+        "php" => Some(LangConfig { name: "PHP", single: &["#", "//"], multi: &[("/*", "*/")] }),
+        "swift" => Some(LangConfig { name: "Swift", single: &["//"], multi: &[("/*", "*/")] }),
+        "kt" | "kts" => Some(LangConfig { name: "Kotlin", single: &["//"], multi: &[("/*", "*/")] }),
+        _ => None,
+    }
+}
+
+/// Counts actual lines of code, ignoring blanks and comments.
+/// Fixed lifetime issue: Option now owns the &'static str references.
+fn analyze_content(content: &str, config: &LangConfig) -> usize {
+    let mut code = 0;
+    // FIX: Changed from Option<&'static ...> to Option<(&'static str, &'static str)>
+    let mut in_multi: Option<(&'static str, &'static str)> = None;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Inside multi-line comment
+        // FIX: Prefixed unused `start` with underscore to silence warning
+        if let Some((_start, end)) = in_multi {
+            if line.ends_with(end) {
+                in_multi = None;
+            }
+            continue;
+        }
+
+        // Single-line comments
+        if config.single.iter().any(|&s| line.starts_with(s)) {
+            continue;
+        }
+
+        // Check for multi-line comment start
+        let mut found_start = None;
+        for &(start, end) in config.multi {
+            if line.starts_with(start) {
+                found_start = Some((start, end));
+                break;
+            }
+        }
+
+        if let Some((start, end)) = found_start {
+            // If it starts and ends on the same line (e.g., `/* comment */`)
+            if !(line.ends_with(end) && line.len() >= start.len() + end.len()) {
+                // FIX: Store owned tuple instead of borrowing a temporary
+                in_multi = Some((start, end));
+            }
+            continue;
+        }
+
+        code += 1;
+    }
+    code
+}
+
+// ──────────────────────────────────────────────────────────────
+// Main & Execution
+// ──────────────────────────────────────────────────────────────
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -92,7 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn run_dump(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     let verbose = !args.silent;
-    
+
     let mut walk_builder = WalkBuilder::new(&args.input_dir);
     walk_builder
         .git_ignore(true)
@@ -124,10 +213,6 @@ async fn run_dump(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    if verbose {
-        eprintln!("Found {} files to process.", file_paths.len());
-    }
-
     let output_file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -135,6 +220,9 @@ async fn run_dump(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         .open(&args.output)
         .await?;
     let mut writer = BufWriter::new(output_file);
+
+    let mut language_counts: HashMap<String, usize> = HashMap::new();
+    let mut total_loc = 0;
 
     for rel_path in &file_paths {
         let absolute_path = args.input_dir.join(rel_path);
@@ -148,6 +236,24 @@ async fn run_dump(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         })
         .await??;
 
+        let ext = rel_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        let loc_for_file = if let Some(config) = get_lang_config(&ext) {
+            let code_lines = analyze_content(&content, &config);
+            *language_counts.entry(config.name.to_string()).or_insert(0) += code_lines;
+            code_lines
+        } else {
+            // Fallback for unknown extensions: count non-blank lines
+            let code_lines = content.lines().filter(|l| !l.trim().is_empty()).count();
+            *language_counts.entry("Other".to_string()).or_insert(0) += code_lines;
+            code_lines
+        };
+
+        total_loc += loc_for_file;
         write_file_entry(&mut writer, rel_path, &content).await?;
     }
 
@@ -155,6 +261,14 @@ async fn run_dump(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     if verbose {
         eprintln!("Done. Output written to {}", args.output.display());
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Summary output (printed at the end)
+    // ──────────────────────────────────────────────────────────────
+    println!("lines of code: {}", total_loc);
+    if let Some((lang, _)) = language_counts.iter().max_by_key(|&(_, count)| count) {
+        println!("most popular language in the codebase: {}", lang);
     }
 
     Ok(())
@@ -184,3 +298,4 @@ async fn write_file_entry(
     writer.write_all(b"```\n\n").await?;
     Ok(())
 }
+
