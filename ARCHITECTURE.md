@@ -104,6 +104,7 @@ None – the tool is fully self‑contained and does not call any external servi
 - **Code Quality**: Uses standard Rust formatting (`cargo fmt`) and linting (`cargo clippy`).
 
 ## 9. Future Considerations / Roadmap
+- Improve code quality and modularize the main codebase
 - Add option to exclude specific file patterns via command line.
 - Generate a table of contents or summary section in the output file.
 - Generate output files in several formats (XML, JSON, Markdown)
