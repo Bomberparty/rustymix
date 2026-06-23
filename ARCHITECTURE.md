@@ -104,11 +104,9 @@ None – the tool is fully self‑contained and does not call any external servi
 - **Code Quality**: Uses standard Rust formatting (`cargo fmt`) and linting (`cargo clippy`).
 
 ## 9. Future Considerations / Roadmap
-- Add support for more comment syntaxes (contributions welcome).
-- Improve language detection by using file name or shebang in addition to extension.
 - Add option to exclude specific file patterns via command line.
-- Generate a table of contents or summary section in the output Markdown.
-- Parallel processing of files for performance on large codebases.
+- Generate a table of contents or summary section in the output file.
+- Generate output files in several formats (XML, JSON, Markdown)
 
 ## 10. Project Identification
 - **Project Name**: rustymix
